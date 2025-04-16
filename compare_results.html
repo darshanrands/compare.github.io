@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Python Dictionary Comparison Tool (Specialized Version)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow: auto;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h2 {
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            margin-bottom: 10px;
+            font-family: monospace;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .match {
+            color: green;
+            font-weight: bold;
+        }
+        .diff {
+            color: #ff9800;
+            font-weight: bold;
+        }
+        .options {
+            margin: 15px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .option-item {
+            margin-bottom: 8px;
+        }
+        .note {
+            margin-top: 5px;
+            font-size: 0.9em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Python Dictionary Comparison Tool (Specialized Version)</h1>
+        
+        <div class="options">
+            <h3>Comparison Options</h3>
+            <div class="option-item">
+                <label>
+                    <input type="checkbox" id="ignoreCase" checked> 
+                    Ignore case for string values
+                </label>
+            </div>
+            <div class="option-item">
+                <label>
+                    <input type="checkbox" id="ignoreWhitespace" checked> 
+                    Ignore whitespace in string values
+                </label>
+            </div>
+            <div class="option-item">
+                <label>
+                    <input type="checkbox" id="ignoreNone" checked> 
+                    Treat None and null as equal
+                </label>
+            </div>
+            <div class="option-item">
+                <label>
+                    Keys to ignore (comma separated): 
+                    <input type="text" id="ignoreKeys" placeholder="e.g., rn,detail_id">
+                </label>
+            </div>
+        </div>
+        
+        <div>
+            <h3>First Python Dictionary Set:</h3>
+            <p class="note">Paste in Python dictionary format (can handle multiple dictionaries)</p>
+            <textarea id="dict1" placeholder="Paste your first set of dictionaries here..."></textarea>
+        </div>
+        
+        <div>
+            <h3>Second Python Dictionary Set:</h3>
+            <p class="note">Paste in Python or JSON dictionary format (can handle multiple dictionaries)</p>
+            <textarea id="dict2" placeholder="Paste your second set of dictionaries here..."></textarea>
+        </div>
+        
+        <button id="compareBtn">Compare Dictionaries</button>
+        
+        <div id="results" style="margin-top: 20px;"></div>
+    </div>
+    
+    <script>
+        // Special brute-force parser for Python dictionaries
+        function bruteForceParsePythonDicts(input) {
+            const dicts = [];
+            let start = -1;
+            
+            // Find dictionary starts and ends
+            for (let i = 0; i < input.length; i++) {
+                if (input[i] === '{') {
+                    if (start === -1) {
+                        start = i;
+                    }
+                } 
+                else if (input[i] === '}' && start !== -1) {
+                    // Extract and process the dictionary
+                    const dictStr = input.substring(start, i + 1);
+                    try {
+                        const dict = processPythonDict(dictStr);
+                        dicts.push(dict);
+                    } catch (e) {
+                        console.error("Error processing dictionary:", e.message);
+                    }
+                    
+                    start = -1; // Reset for next dictionary
+                }
+            }
+            
+            return dicts;
+        }
+        
+        // Process a single Python dictionary string
+        function processPythonDict(dictStr) {
+            // Convert Python special values
+            let processed = dictStr
+                .replace(/None/g, "null")
+                .replace(/True/g, "true")
+                .replace(/False/g, "false");
+            
+            // Fix timestamps
+            processed = processed.replace(/(\d{4}-\d{2}-\d{2}T\d{2}):\s+(\d{2}):\s+(\d{2}Z)/g, "$1:$2:$3");
+            
+            // Convert Python quotes to JSON
+            processed = processed
+                .replace(/'([^']+)':/g, '"$1":')  // For keys
+                .replace(/:\s*'([^']*)'/g, ':"$1"'); // For values
+            
+            try {
+                return JSON.parse(processed);
+            } catch (e) {
+                throw new Error(`Failed to parse dict: ${e.message}`);
+            }
+        }
+        
+        // Try to parse input as JSON first, then fall back to Python parsing
+        function parseInput(input) {
+            if (!input || !input.trim()) {
+                return [];
+            }
+            
+            let trimmed = input.trim();
+            
+            // Try JSON first
+            try {
+                const parsed = JSON.parse(trimmed);
+                return Array.isArray(parsed) ? parsed : [parsed];
+            } catch (e) {
+                console.log("Not valid JSON, trying Python format");
+            }
+            
+            // Fall back to Python dict parsing
+            try {
+                return bruteForceParsePythonDicts(trimmed);
+            } catch (e) {
+                throw new Error("Failed to parse input: " + e.message);
+            }
+        }
+        
+        // Compare two objects
+        function compareDicts(dict1, dict2, options) {
+            const differences = {
+                differentValues: {},
+                onlyInFirst: {},
+                onlyInSecond: {}
+            };
+            
+            // Process keys to ignore
+            const keysToIgnore = new Set(options.ignoreKeys);
+            
+            // Normalize value based on options
+            function normalizeValue(value) {
+                if (value === null || value === undefined) {
+                    return options.ignoreNone ? null : value;
+                }
+                
+                if (typeof value === 'string') {
+                    let normalized = value;
+                    
+                    if (options.ignoreWhitespace) {
+                        normalized = normalized.replace(/\s+/g, ' ').trim();
+                    }
+                    
+                    if (options.ignoreCase) {
+                        normalized = normalized.toLowerCase();
+                    }
+                    
+                    return normalized;
+                }
+                
+                return value;
+            }
+            
+            // Check for values in dict1
+            for (const key in dict1) {
+                if (keysToIgnore.has(key)) continue;
+                
+                if (key in dict2) {
+                    const val1 = normalizeValue(dict1[key]);
+                    const val2 = normalizeValue(dict2[key]);
+                    
+                    // Convert to string for comparison
+                    if (JSON.stringify(val1) !== JSON.stringify(val2)) {
+                        differences.differentValues[key] = {
+                            first: dict1[key],
+                            second: dict2[key]
+                        };
+                    }
+                } else {
+                    differences.onlyInFirst[key] = dict1[key];
+                }
+            }
+            
+            // Check for keys only in dict2
+            for (const key in dict2) {
+                if (keysToIgnore.has(key) || key in dict1) continue;
+                differences.onlyInSecond[key] = dict2[key];
+            }
+            
+            return differences;
+        }
+        
+        // Check if there are differences
+        function hasDifferences(diff) {
+            return Object.keys(diff.differentValues).length > 0 || 
+                   Object.keys(diff.onlyInFirst).length > 0 || 
+                   Object.keys(diff.onlyInSecond).length > 0;
+        }
+        
+        // Create a section with details
+        function createSection(title, content, isEmpty = false) {
+            const className = isEmpty ? "match" : "diff";
+            return `
+                <h3 class="${className}">${title} ${isEmpty ? "(No differences)" : ""}</h3>
+                ${!isEmpty ? `<pre>${content}</pre>` : ""}
+            `;
+        }
+        
+        // Handle comparison button click
+        document.getElementById("compareBtn").addEventListener("click", function() {
+            const dict1Input = document.getElementById("dict1").value;
+            const dict2Input = document.getElementById("dict2").value;
+            const resultsDiv = document.getElementById("results");
+            
+            // Get options
+            const options = {
+                ignoreCase: document.getElementById("ignoreCase").checked,
+                ignoreWhitespace: document.getElementById("ignoreWhitespace").checked,
+                ignoreNone: document.getElementById("ignoreNone").checked,
+                ignoreKeys: document.getElementById("ignoreKeys").value
+                    .split(",")
+                    .map(k => k.trim())
+                    .filter(k => k !== "")
+            };
+            
+            try {
+                // Parse both inputs
+                const dicts1 = parseInput(dict1Input);
+                const dicts2 = parseInput(dict2Input);
+                
+                if (dicts1.length === 0 || dicts2.length === 0) {
+                    resultsDiv.innerHTML = '<div class="error">Could not parse dictionaries from input</div>';
+                    return;
+                }
+                
+                if (dicts1.length !== dicts2.length) {
+                    resultsDiv.innerHTML = `<div class="error">Number of dictionaries doesn't match: ${dicts1.length} vs ${dicts2.length}</div>`;
+                    return;
+                }
+                
+                // Display results
+                let resultsHtml = "<h2>Comparison Results</h2>";
+                
+                if (dicts1.length === 1) {
+                    // Single dictionary comparison
+                    const differences = compareDicts(dicts1[0], dicts2[0], options);
+                    
+                    if (!hasDifferences(differences)) {
+                        resultsHtml += '<div class="match">The dictionaries are identical (considering your comparison options).</div>';
+                    } else {
+                        const diffValuesEmpty = Object.keys(differences.differentValues).length === 0;
+                        const firstOnlyEmpty = Object.keys(differences.onlyInFirst).length === 0;
+                        const secondOnlyEmpty = Object.keys(differences.onlyInSecond).length === 0;
+                        
+                        resultsHtml += createSection(
+                            "Keys with Different Values:", 
+                            JSON.stringify(differences.differentValues, null, 2),
+                            diffValuesEmpty
+                        );
+                        
+                        resultsHtml += createSection(
+                            "Keys Only in First Dictionary:", 
+                            JSON.stringify(differences.onlyInFirst, null, 2),
+                            firstOnlyEmpty
+                        );
+                        
+                        resultsHtml += createSection(
+                            "Keys Only in Second Dictionary:", 
+                            JSON.stringify(differences.onlyInSecond, null, 2),
+                            secondOnlyEmpty
+                        );
+                    }
+                } else {
+                    // Multiple dictionaries comparison
+                    const identical = [];
+                    const different = [];
+                    
+                    for (let i = 0; i < dicts1.length; i++) {
+                        const differences = compareDicts(dicts1[i], dicts2[i], options);
+                        
+                        if (hasDifferences(differences)) {
+                            different.push({
+                                index: i,
+                                differences: differences
+                            });
+                        } else {
+                            identical.push(i);
+                        }
+                    }
+                    
+                    // Show summary
+                    resultsHtml += `
+                        <div class="summary">
+                            Total dictionaries: ${dicts1.length}<br>
+                            <span class="match">Identical: ${identical.length}</span><br>
+                            <span class="diff">Different: ${different.length}</span>
+                        </div>
+                    `;
+                    
+                    // Show details for each difference
+                    for (const diff of different) {
+                        resultsHtml += `<h3>Dictionary #${diff.index + 1} Differences</h3>`;
+                        
+                        const differences = diff.differences;
+                        const diffValuesEmpty = Object.keys(differences.differentValues).length === 0;
+                        const firstOnlyEmpty = Object.keys(differences.onlyInFirst).length === 0;
+                        const secondOnlyEmpty = Object.keys(differences.onlyInSecond).length === 0;
+                        
+                        resultsHtml += createSection(
+                            "Keys with Different Values:", 
+                            JSON.stringify(differences.differentValues, null, 2),
+                            diffValuesEmpty
+                        );
+                        
+                        resultsHtml += createSection(
+                            "Keys Only in First Dictionary:", 
+                            JSON.stringify(differences.onlyInFirst, null, 2),
+                            firstOnlyEmpty
+                        );
+                        
+                        resultsHtml += createSection(
+                            "Keys Only in Second Dictionary:", 
+                            JSON.stringify(differences.onlyInSecond, null, 2),
+                            secondOnlyEmpty
+                        );
+                    }
+                }
+                
+                resultsDiv.innerHTML = resultsHtml;
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        });
+    </script>
+</body>
+</html>
